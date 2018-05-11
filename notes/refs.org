@@ -1,0 +1,113 @@
+* [[https://dl.acm.org/citation.cfm?id=2462184][P: Safe Asynchronous Event-Driven Programming]] [[https://drive.google.com/open?id=0B_2n5Ao-W7oVdUM3eDhhUFp1LVE][(TR]])
+  #+BEGIN_QUOTE
+  P is a domain-specific language for writing asynchronous eventdriven
+  programs. Protocols governing the interaction among concurrently
+  executing components are essential for safe execution of such
+  programs. The P language is designed to clearly explicate these
+  control protocols; to process data and perform other functions
+  irrelevant to control flow, P machines have the capability to call
+  external functions written in C. We call those functions foreign
+  functions.
+
+  A P program is a collection of machines. Machines communicate with
+  each other asynchronously through events. Events are queued, but
+  machines are required to handle them in a responsive manner (defined
+  precisely later)—failure to handle events is detected by automatic
+  verification.
+  #+END_QUOTE
+
+  Presents a state machine language with:
+  - TODO.
+
+  Aside from the language itself, the authors develop model-checking
+  tools and use them to verify the correctness (TODO: WHAT
+  PROPERTIES?) of several implementations.
+
+  The language and accompanying verification tools were used to
+  develop the core (TODO: WHICH PART) of the USB 3.0 driver in
+  Windows 8.
+** State strucutre
+   A state is a tuple containing the following elements:
+*** State name
+*** Deferred set
+    A set of messages that will be deferred to later: they will not be
+    handled in the current state, but rather left on the queue for
+    handling in a later transition.
+*** Ignored set
+    A set of messages that will be dequeued in this state, without
+    triggering a transition.
+*** Entry statement
+    This statement is executed when the state is entered.
+*** TODO Does eML have analogues to deferred and ignored sets?
+** State transitions
+   There are two kinds of state transitions in P:
+   - Step Transitions :: A step transition is an ordinary transition
+        which changes the current state of the machine to a new one in
+        response to receiving an event.
+   - Call Transitions :: A call transition is a transition to another
+        state which pushes the new state onto the stack of current
+        states.  The new state is popped off the stack when there is
+        no handler for the current transition in the child state ---
+        indeed, the stack will be popped /until/ a handler can be
+        found, if I understand the rule =(Call)= properly.  This is
+        subtler than the explicit child-handling semantics in eML.
+        Note this also prohibits a machine from having a child of the
+        same type as a child, since the child would never be able to
+        return to the parent --- the parent doesn't have any state
+        handlers that the child doesn't.
+
+        Note that the popping behavior in submachines is essential to
+        the way that ignored states are desugared; see the relevant
+        part of section 3.1.
+** Correspondences to eML
+*** State tranisitions
+    The =raise= statement resembles the final expression in each
+    transition that specifies which state to go to next.
+*** Public and Private Events
+    #+BEGIN_QUOTE
+    Machines communicate with each other using events. Events are
+    partitioned into two classes: public or private. Public events are
+    sent between different machines and private events are raised
+    within a machine.
+    #+END_QUOTE
+*** Nested states
+    P provides a facility for nested machines via "call transitions",
+    which allow a child machine to be spawned during one of the parent
+    machine's state transitions.
+**** TODO Are child machines executed synchronously?
+**** TODO What's the difference between returning and popping?
+** Divergences from eML
+*** Model checking
+    We don't do any model checking.  Because of this, we also don't
+    include ghost machines and corresponding ghost variables, because
+    those are only needed for verification.
+*** Nested states
+**** TODO We should have examples ready for where the divergences are useful
+**** Independent parent and child transitions
+     In eML, the parent and the child are allowed to transition
+     independently.  In P, a child machine's state is popped off the
+     stack once the spawning parent machine state is exited.
+
+     Benefits of independent execution:
+**** Child transitions may be overridden
+     The parent of a machine may override the state transitions of a
+     child machine.
+*** TODO Control of state transitions
+    Fill this in.  The thing I want to say is that the state
+    transitions in P are controlled solely by "raise" statements in
+    state handlers, while in eML state transitions are conditioned by
+    (1) the expression definining the previous state, (2) the state of
+    child machines, and (3) any incoming messages.  However, this is
+    all very fuzzy, and it's hard to explain.  We need to figure out
+    how possible it is to express the structures we can express in eML
+    in P.
+*** Cancellation
+    In P, machines can only cancel themselves via a =delete=
+    statement.  In eML, a parent machine may cancel another by simply
+    forgetting the machine.  This allows for useful higher-order
+    machines like a machine which controls the total number of queries
+    served by a child server or the total amount of time the child is
+    active.
+*** Explicit deferred events
+    eML is not explicitly event-driven, and does not provide a way to
+    defer events.

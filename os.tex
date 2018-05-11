@@ -1,0 +1,228 @@
+% Copyright 2017 Google Inc.
+%
+% Licensed under the Apache License, Version 2.0 (the "License");
+% you may not use this file except in compliance with the License.
+% You may obtain a copy of the License at
+%
+%     http://www.apache.org/licenses/LICENSE-2.0
+%
+% Unless required by applicable law or agreed to in writing, software
+% distributed under the License is distributed on an "AS IS" BASIS,
+% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+% See the License for the specific language governing permissions and
+% limitations under the License.
+\documentclass[acmsmall]{acmart}
+\usepackage{semantic}
+\usepackage{array}
+\usepackage{amssymb,amsmath}
+
+\newcolumntype{C}{>{$\displaystyle}c<{$}}
+\newcommand{\onecol}[1]{\multicolumn{2}{C}{#1}}
+
+\reservestyle[\mathrel]{\command}{\mathbf}
+\command{handle[\;handle\;],cancel[cancel\;],sync[sync\;]}
+\command{fst,snd,channel,false,true}
+\command{unit,event[\;event]}
+\command{dom,FV}
+
+\begin{document}
+
+\title{DRAFT: A fiber-based concurrent operational semantics}
+\author{Healfdene Goguen}
+\maketitle
+
+\section{Overview}
+
+This note explains the operational semantics of a concurrent subset of EML, based on the google3 implementation of fibers. The model presented is a simplification of EML because it does not include state machines, data types, or pattern matching.
+
+The model can informally be described as a tree of concurrently executing nodes. Each node in the tree is called a fiber, and contains a set of channel names, a syntactic term, and zero or more events. The channels and events are referred to by distinguished variable sets in the expressions. Events can be channel send and receive, a special event indicating cancellation, as well as child fibers. Events can be referred to at most once in the expression by their associated variable; since the fibers are events and therefore unique, this leads to a tree form.
+
+The execution model for a fiber is to evaluate its expression to normal form, and then select over the subset of events specified as requiring synchronization in the expression. On synchronization, the expression associated with the event is substituted into the synchronization point in the fiber; if the event was a fiber, its channels and events are incorporated into the parent's channels and events. If a fiber is normal and has no remaining events requested for synchronization, it is ready for synchronization with its parent. Events in a fiber whose associated variable does not occur in the expression have been cancelled. Channel send and receive events will be garbage collected on cancellation. Child fibers are marked as cancelled but continue execution; cancellation events synchronize as soon as the associated fiber is cancelled.
+
+The remainder of this note formalizes this informal description.
+
+\section{Syntax}
+
+\subsection{Programs}
+
+The following internal syntax is used for the definition of evaluation and suffices for the purposes of this note:
+\[ e \in \mathit {Term} ::= x\ |\ \kappa\ |\ \gamma\ |\ b\ |\ \lambda x.e\ |\ e(e')\ |\ (e,e')\ |\ \<channel>\ |\ e!e'\ |\ e?\ |\ \<cancel>\ |\ ||e\ |\ \<sync> e \]
+
+Variables $\kappa$ are channel identifiers, and variables $\gamma$ are event identifiers. Constants can include data such as integers as well as elimination constants, and are denoted by variables $b$. Pairs are used to simplify the definition of values. Events are channel send $e!e'$, channel receive $e?$, and fiber spawn $||e$ (unlike in EML, the channel events are asynchronous). $\<sync> e$ synchronizes with an event.
+
+Removing $\kappa$ and $\gamma$ from the syntactic definition yields the surface syntax, i.e. the syntax used in program definition. However, the surface syntax is not needed for the purposes of this note.
+
+Values are expressions that have no further synchronous or asynchronous reducts and have the form:
+\[ v \in \mathit {Value} ::= \kappa\ |\ \gamma\ |\ b\ |\ \lambda x.e\ |\ (v_1,v_2) \]
+
+Selects are expressions that have no further synchronous reducts. They may still contain synchronization requests with events and have the form:
+\[ s \in \mathit {Select} ::= \kappa\ |\ \gamma\ |\ b\ |\ \lambda x.e\ |\ (s_1,s_2)\ |\ \<sync> \gamma \]
+
+The event values are of the form:
+\[ ev \in \mathit {EV} ::= \kappa!v\ |\ \kappa?\ |\ \<cancel>\ |\ ||\phi \]
+\noindent (defined simultaneously with fibers $\phi$ below).
+
+Some specific constants required later include the distinguished value $* : unit$, and the projection functions $\<fst>: \sigma_1 * \sigma_2 \to \sigma_1$ and $\<snd>: \sigma_1 * \sigma_2 \to \sigma_2$.
+
+\subsection{Fibers}
+
+Fibers are of the form:
+\[ \phi \in \mathit {Fiber} ::= \nu \kappa_1...\kappa_m. (e[\gamma_1:= ev_1...\gamma_n:= ev_n], c) \]
+\noindent for $c$ a boolean.
+
+The map $[\gamma_1:= ev_1...\gamma_n:= ev_n]$ is referred to as an {\it event map}; we allow $\eta$ to range over event maps. We refer to $\gamma_1\dots \gamma_n$ as the domain of $\eta$. If $V = \gamma_{i_1}\dots\gamma_{i_m}$ are in the domain of $\eta$, we write $\eta|V$ for the event map restricted to $V$. Similarly, we write $\eta-V$ for the event map not containing the event variabales in $V$.
+
+The channel identifiers $\kappa_1...\kappa_m$ are scoped for the fiber, including its children. $e$ is an expression, with the event identifiers $\gamma_1...\gamma_n$ scoped within $e$ and occurring zero or one times. Fibers are identified up to $\alpha$-equivalence of channel and event identifiers, as well as reordering of the events.
+
+We omit the channel identifiers and events when it can be done unambiguously.
+
+\section{Typing}
+
+Types are of the form:
+\[ \sigma \in \mathit {Type} ::= B\ |\ \sigma_1 \to \sigma_2\ |\ \sigma_1 \Rightarrow \sigma_2\ |\ \sigma_1 * \sigma_2\ |\ \sigma \<event>\ |\ \sigma\ \<channel> \]
+\noindent where $B$ denotes a constant type. Types $\sigma_1 \to \sigma_2$ and $\sigma \<event>$ are affine.
+
+Contexts $\Gamma$ for intuitionistic terms and $\Delta$ for affine terms are defined as follows:
+\[ \Gamma, \Delta \in \mathit {Ctxt} ::= \bullet\ |\ \Gamma, x : \sigma \]
+
+The domain $\<dom>(\Gamma)$ is the empty set if $\Gamma = \bullet$, or $\>dom>(\Gamma_0) \cup \{ x \}$ if $\Gamma = \Gamma_0, x : \sigma$. Joint contexts $\Gamma, \Delta$ are {\it valid} if they satisfy the following rules:
+\begin{itemize}
+\item $\bullet; \bullet$ is valid.
+\item $\Gamma, x : \sigma; \Delta$ is valid if $\Gamma; \Delta$ is valid, $\sigma$ is not affine, and $x \not\in \<dom>(\Gamma) \cup \<dom>(\Delta)$.
+\item $\Gamma; \Delta, x : \sigma$ is valid if $\Gamma; \Delta$ is valid, $\sigma$ is affine, and $x \not\in \<dom>(\Gamma) \cup \<dom>(\Delta)$.
+\end{itemize}
+
+The typing judgement is $\Gamma; \Delta \vdash e: \sigma$. The rules are in Figure~\ref{fig:typing}. (There may be errors because I have not put effort into the type system.)
+
+\begin{figure}
+\centering
+\renewcommand{\arraystretch}{2}
+\begin{tabular}{CC}
+\inference[Var]{x:\sigma \in \Gamma & \Gamma; \Delta\ \mathit{valid}}{\Gamma; \Delta \vdash x : \sigma} &
+  \inference[LVar]{x:\sigma \in \Delta & \Gamma; \Delta\ \mathit{valid}}{\Gamma; \Delta \vdash x : \sigma} \\
+\inference[Constr]{b:\sigma}{\Gamma; \Delta \vdash b : \sigma} &
+  \inference[Channel]{}{\Gamma; \Delta \vdash \<channel> : \<unit> \Rightarrow \sigma\ \<channel>} \\
+\onecol{
+  \inference[Send]{\Gamma; \Delta \vdash e : \sigma\;\<channel> & \Gamma; \Delta' \vdash e' : \sigma &
+                    \Gamma; \Delta, \Delta'\ \mathit{valid}}
+                  {\Gamma; \Delta, \Delta' \vdash e!e' : \<unit> \<event>}} \\
+\inference[Rcv]{\Gamma; \Delta \vdash e : \sigma\;\<channel>}{\Gamma; \Delta \vdash e? : \sigma \<event>} &
+  \inference[Cancel]{}{\Gamma; \Delta \vdash \<cancel> : \<unit> \Rightarrow \<unit>\ \<event>} \\
+\inference[Spawn]{\Gamma; \Delta \vdash e : \sigma}{\Gamma; \Delta \vdash ||e : \sigma \<event>} &
+  \inference[Sync]{\Gamma; \Delta \vdash e : \sigma \<event>}{\Gamma; \Delta \vdash \<sync> e : \sigma} \\
+\inference[L$\lambda$L]{\Gamma, x : \sigma; \Delta \vdash e : \tau}{\Gamma; \Delta \vdash \lambda x : \sigma. e : \sigma \to \tau} &
+  \inference[L$\lambda$R]{\Gamma; \Delta, x : \sigma \vdash e : \tau}{\Gamma; \Delta \vdash \lambda x : \sigma. e : \sigma \to \tau} \\
+\inference[$\lambda$L]{\Gamma, x : \sigma; \bullet \vdash e : \tau}{\Gamma; \bullet \vdash \lambda x : \sigma. e : \sigma \Rightarrow \tau} &
+  \inference[$\lambda$R]{\Gamma; x : \sigma \vdash e : \tau}{\Gamma; \bullet \vdash \lambda x : \sigma. e : \sigma \Rightarrow \tau} \\
+\onecol{
+  \inference[LApp]{\Gamma; \Delta \vdash e : \sigma \to \tau & \Gamma; \Delta' \vdash e' : \sigma &
+                    \Gamma; \Delta, \Delta'\ \mathit{valid}}
+                  {\Gamma; \Delta, \Delta' \vdash e(e') : \tau}} \\
+\onecol{
+  \inference[App]{\Gamma; \Delta \vdash e : \sigma \Rightarrow \tau & \Gamma; \Delta' \vdash e' : \sigma & \Gamma; \Delta, \Delta'\ \mathit{valid}}
+                 {\Gamma; \Delta, \Delta' \vdash e(e') : \tau}}
+\end{tabular}
+\caption{Typing Rules}\label{fig:typing}
+\end{figure}
+
+\section{Operational Semantics}
+
+The operational semantics is adapted from the operational semantics of Concurrent ML in [Reppy], Appendix B.
+
+There are several relations defined for the operational semantics:
+\begin{itemize}
+\item Synchronous evaluation $\phi \triangleright \phi'$.
+\item Rendezvous reduction.
+\item Cancellation.
+\item Concurrent evaluation $\phi \Rightarrow \phi'$.
+\end{itemize}
+
+A fiber of the form $\nu \kappa_1...\kappa_m. (v\eta, c)$, where the synchronous term $v$ has fully evaluated and the fiber has no event identifiers under synchronization, is {\it joinable}.
+
+We treat the evaluation relations in turn.
+
+\subsection{Synchronous evaluation}
+
+We use evaluation contexts to define the synchronous call-by-value evaluation relation.
+\[ E \in \mathit {EvalCtxt} ::= []\ |\ E(e)\ |\ s(E)\ |\ (E,e)\ |\ (s,E)\ |\ \<sync> E\ |\ E!e\ |\ \kappa!E\ |\ E? \]
+
+With this definition, any expression can be expressed by substituting a redex into the hole of an evaluation context, and evaluation proceeds by reducing that redex.
+
+A total function $\delta[b]$ maps values to values for each constant function. Examples include:
+\begin{eqnarray*}
+  \delta[+](1,1) & = & 2 \\
+  \delta[\<fst>](v_1,v_2) & = & v_1 \\
+  \delta[\<snd>](v_1,v_2) & = & v_2
+\end{eqnarray*}
+
+The following rules express the possible reducts:
+\begin{eqnarray*}
+  E[(\lambda x. e)(v)] & \triangleright & E[e[v/x]] \\
+  E[\<channel>(*)] & \triangleright & \nu \kappa. E[\kappa] \\
+  E[\<cancel>(*)] & \triangleright & E[\gamma][\gamma:=\<cancel>] \\
+  E[b(v)] & \triangleright & E[\delta[b](v)] \\
+  E[\kappa!v] & \triangleright & E[\gamma][\gamma:=\kappa!v] \\
+  E[\kappa?] & \triangleright & E[\gamma][\gamma:=\kappa?]
+\end{eqnarray*}
+\noindent In $\beta$- or $\delta$-reduction, any events whose event identifiers $\gamma$ that occur in the redex but not in the reduct are {\it cancelled}. Cancellation of events is defined in its own section.
+
+We then define synchronous evaluation of a fiber as follows: if $\phi \equiv \nu \kappa_1\dots\kappa_m.(e\eta, c)$ and $e \triangleright \nu \kappa'.e'[\eta']$ then $\phi \triangleright \nu \kappa_1\dots\kappa_m\kappa'. (e'[\eta \eta'], c)$. By inspection, synchronous evaluation always maintains or increases the sets of channel and event identifiers associated with a fiber.
+
+\subsection{Rendezvous reduction}
+
+A {\it path} is a non-empty list of integers $p = i_1. \dots .i_m$. We define the synchronizable events in a select $s$ as follows:
+\begin{eqnarray*}
+  {\mathit sync}(\<sync> \gamma_i) & = & i \\
+  {\mathit sync}(\lambda x. e) & = & \{ \} \\
+  {\mathit sync}(s_1s_2) & = & {\mathit sync}(s_1) \cup {\mathit sync}(s_2) \\
+  {\mathit sync}(c) & = & \{ \} \\
+  {\mathit sync}(\nu \kappa_1 \dots k_m. (e[\gamma_1:= ev_1 \dots \gamma_n:= ev_n], c) & = &
+    {\mathit sync}(e) \cup \cup_{i\in\{1\dots n\}}(ev_i)
+\end{eqnarray*}
+
+Path selection of an event in a fiber, $\xi_p(\phi)$, and in an event map, $\xi_p(\eta)$, are defined as follows:
+\begin{itemize}
+\item $\xi_p(\nu \kappa_1\dots \kappa_n. (e[\eta], c)) = \xi_p(\eta)$. $\xi_p(ev)$ is undefined if $ev$ is not a fiber.
+\item $\xi_{i.()}(\gamma_1:= ev_1\dots \gamma_m:= ev_m) = ev_i$.
+\item $\xi_{i.p}(\gamma_1:= ev_1\dots \gamma_m:= ev_m) = \xi_p(ev_i)$ if $p$ non-empty.
+\end{itemize}
+
+Path update of an event in a fiber, $S_p^v(\phi)$, and in an event map, $S_p^v(\eta)$, are defined as follows:
+\begin{itemize}
+\item $S_p^v(\nu \kappa_1\dots \kappa_n. (e[\eta], c)) = \nu \kappa_1\dots \kappa_n. (e[S_p^v(\eta)], c)$. $S_p^v(ev)$ is undefined if $ev$ is not a fiber.
+\item $S_{i.()}^v(\gamma_1:= ev_1\dots \gamma_m:= ev_m) = \gamma_1:= ev_1 \dots \gamma_{i-1}:= ev_{i-1}\{v\}\gamma_{i+1}:= ev_{i+1}\dots \gamma_m:= ev_m$.
+\item $S_{i.p}^v(\gamma_1:= ev_1\dots \gamma_m:= ev_m) = \gamma_1:= ev_1 \dots \gamma_{i-1}:= ev_{i-1} S_p^v(ev_i) \gamma_{i+1}:= ev_{i+1}\dots \gamma_m:= ev_m$ if $p$ non-empty.
+\end{itemize}
+\noindent (This needs to allow events to move together with the term. Channel scoping is handled by $\alpha$-conversion.)
+
+For a term $e$, define $\Xi_e = \{ (p, \xi_p(ev_1\dots ev_m))\ |\ p \in {\mathit sync}(e) \}$. If there are $\kappa$, $p_1$ and $p_2$ such that $(p_1, \kappa!v)$ and $(p_2, \kappa?)$ are in $\Xi_e$, then $e$ reduces to $S_{p_1}^{*}(S_{p_2}^v(e))$ under rendezvous reduction.
+
+\subsection{Cancellation}
+
+A term is {\it discarded} when it is the argument in a $\beta$-reduction where the bound parameter does not occur in the body of the $\lambda$-term. Cancellation occurs for all events occurring in the discarded term. Cancelled channel send and receive events simply no longer match with their opposite, so cannot synchronize. Cancelled fibers are marked as such inside the body of the fiber. Any cancellation events $\<cancel>$ occurring within the cancelled fiber immediately yield a joinable fiber containing the distinguished term $*$; future cancellation events spawned in the fiber will immediately yield $*$. However, the cancellation does not propagate into other child events of the fiber unless the fiber discards them.
+
+Some relation should also garbage collect cancelled events, either cancellation or concurrent evaluation.
+
+\subsection{Concurrent evaluation}
+
+Concurrent evaluation is defined as follows:
+\begin{itemize}
+\item If $\phi \Rightarrow \phi'$ then $\gamma_1:= ev_1\dots ,\gamma_i:=||\phi,\dots \gamma_n:= ev_n \Rightarrow \gamma_1:= ev_1\dots ,\gamma_i:=||\phi',\dots \gamma_n:= ev_n$.
+\item If $\phi \triangleright \phi'$ then $\phi \Rightarrow \phi'$.
+\item $\nu \kappa_1\dots \kappa_m. (E[||e][\eta], c) \Rightarrow \nu \kappa_1\dots \kappa_m.(E[\gamma'][\eta-\<FV>(e), \gamma':= ||(e[\eta|\<FV>(e)], \<false>)], c)$.
+\item $\nu \kappa_1\dots \kappa_m. (E[\<sync> \gamma_i])[\eta], c) \Rightarrow \nu \kappa_1\dots \kappa_m\kappa_1'\dots \kappa_m'. (E[v'])((\eta-\{\gamma_i\})\eta', c)$ if $\eta(\gamma_i) \equiv \nu \kappa_1'\dots \kappa_{m'}'. (v'[\eta'], c')$ is joinable.
+\item If $\eta \Rightarrow \eta'$ then $\nu \kappa_1\dots \kappa_m. (e[\eta], c) \Rightarrow \nu \kappa_1\dots \kappa_m. (e[\eta'], c)$.
+\end{itemize}
+
+\section{Notes}
+
+\begin{itemize}
+\item The vote handler in the two-phase commit example suggests that datatypes with nested events should be call-by-name instead of call-by-value, to allow lazy synchronization with the remaining events when a participant has voted to reject the transaction.
+\item Constants cannot currently incorporate events, but should be able to, e.g. lists of events.
+\end{itemize}
+
+\section{References}
+
+[Reppy]. John Reppy. Concurrent Programming in ML.
+
+\end{document}

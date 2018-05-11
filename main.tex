@@ -1,0 +1,310 @@
+% Copyright 2017 Google Inc.
+%
+% Licensed under the Apache License, Version 2.0 (the "License");
+% you may not use this file except in compliance with the License.
+% You may obtain a copy of the License at
+%
+%     http://www.apache.org/licenses/LICENSE-2.0
+%
+% Unless required by applicable law or agreed to in writing, software
+% distributed under the License is distributed on an "AS IS" BASIS,
+% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+% See the License for the specific language governing permissions and
+% limitations under the License.
+\documentclass[acmsmall]{acmart}
+\usepackage{semantic}
+\usepackage{array}
+
+\newcolumntype{C}{>{$\displaystyle}c<{$}}
+\newcommand{\onecol}[1]{\multicolumn{2}{C}{#1}}
+
+\reservestyle[\mathrel]{\command}{\mathbf}
+\command{if[if\;],then[\;then\;],else[\;else\;]}
+% space is already provided by ``handle'' for ``cancel''.
+\command{handle[\;handle\;],cancel[cancel\;],channel[\;channel]}
+\command{sleep[sleep\;],never}
+\command{int,string,unit,bool}
+\command{datatype[datatype\;],machine[machine\;],fun[fun\;],val[val\;]}
+\command{let[let\;],in[\;in\;],end[\;end]}
+\command{case[\;case\;],of[\;of\;],and[\;and\;]}
+\command{true,false}
+\reservestyle{\judge}{\mathit}
+\judge{binop[\;binop\;],type[\;type],valid[\;valid]}
+
+\begin{document}
+
+\title[EML]{EML}
+\maketitle
+
+\section{Introduction}
+
+EML is a programming language.
+
+To be discussed:
+\begin{itemize}
+\item Why machines have transitions but datatypes do not.
+\item Why events are asynchronous (because events should have a type).
+\item Why events are values.
+\item Why events are linear. Annoyances with linear type system are
+  offset by improvements in operational behavior. For example, event
+  cancellation is synchronous in EML, unlike CML where event
+  cancellation is subject to garbage collection strategy.
+\item Interaction of polymorphism and kinds in evaluation strategy.
+\item Tree structure of tasks: a task is composed of subtasks,
+  synchronous or asynchronous, that can be cancelled.
+\item A synchronous term reflects an evaluation and select loop.  A
+  term continues to evaluate other branches when it reaches an event,
+  until all events at the leaves have been discovered and can be
+  selected upon.
+\item Because events are linear, they can be handled locally within
+  their fiber.
+\end{itemize}
+
+\section{Language Definition}
+
+\subsection{Terms}
+
+Let $i, j, \dots$ denote integer constants, $s$ denote string constants,
+$c, c', \dots \in \mathit{DV}$ denote datatype constructors, $C, C',
+\dots \in \mathit{MV}$ denote machine constructors, and $x, x', \dots
+\in \mathit{PV}$ denote pattern variables.  The term language for EML
+is as follows:
+\begin{itemize}
+\item
+  $
+  \<binop> \in \mathit{BinOp} ::=
+  \mathtt{+} |
+  \mathtt{-} |
+  \mathtt{*} |
+  \mathtt{/} |
+  \mathtt{=} |
+  \mathtt{>} |
+  \mathtt{<} |
+  \mathtt{>=} |
+  \mathtt{<=} |
+  \mathtt{!=}
+  $. $\mathtt{+}, \mathtt{-}, \mathtt{*}, \mathtt{/}$ are {\it arithmetic},
+  and the remaining operators are {\it comparators}.
+\item
+  $
+  e, e' \in \mathit{Config} ::= i\ |\ s\ |\ e \<binop> e'\ |\ c(e_1, \dots, e_n)
+  \ |\ \lambda x : \sigma. e\ |\ C(e_1, \dots, e_n) \ |\ x\ |\ (|e)\ |\ (e; e')
+  \ |\ \<if> e \<then> e' \<else> e''\ |\ \<case> e \<of> P_i => e_i
+  \ |\ \<let> \<val> x = e \<in> e' \<end>
+  \ |\ e!e'\ |\ e?\ |\ e \<handle> \<cancel> \Rightarrow e'\ |\ e : \sigma
+  \ |\ \<sleep> i\ |\ \<never>
+  $
+\item
+  $
+  P, P' \in \mathit{Pattern} ::= i\ |\ s\ |\ x\ |\ c(e_1, ..., e_n)
+  \ |\ C(e_1, ..., e_n)\ |\ |P
+  $
+\item
+  $\sigma \in \mathit{Type} ::= t\ |\ T\ |\ \sigma_1 \to \sigma_2\ |\ \sigma_1 \Rightarrow \sigma_2\ |\ |\sigma$.
+\item
+  $\Gamma, \Delta, \Lambda \in \mathit{Ctxt} ::= \bullet\ |\ \Gamma, x : \sigma$.
+\item
+  $D \in \mathit{DDecl} ::= \<datatype> t = c_1 \<of> \sigma_{1,1} * \dots * \sigma_{1,n_1}\ |\ \dots
+  \ |\ c_m \<of> \sigma_{m,1} * \dots * \sigma_{m,n_m}$.
+
+  In this case, the uses of $|$ are literal and part of the syntax, rather
+  than indicating different constructors.
+\item
+  $M \in \mathit{MDecl} ::= \<machine> M = c_1 \<of> \sigma_{1,1} * \dots * \sigma_{1,n_1}\ |\ \dots
+  \ |\ c_m \<of> \sigma_{m,1} * \dots * \sigma_{m,n_m}
+  \ \<and>\
+  (c_{j_1} P_{1,1} \dots P_{1,n_1} = e_1)\ \dots\ (c_{j_p} P_{1,1} \dots P_{1,n_p} = e_p)$.
+
+  In this case, the uses of $|$ are literal and part of the syntax, rather
+  than indicating different constructors.
+\item
+  $F \in \mathit{FDecl} ::= \<fun> f P_{1,1} \dots P_{1,n} = e_1\ |\ \dots
+  \ |\ f P_{m,1} \dots P_{m,n} = e_m : \sigma$.
+\item
+  $V \in \mathit{VDecl} ::= \<val> v = e : \sigma$.
+\item
+  $\Sigma \in \mathit{Sig} ::= \bullet\ |\ \Sigma, D\ |\ \Sigma, M$, i.e. $\Sigma$ is a sequence
+  of datatype and machine declarations.
+\end{itemize}
+
+Events are sleep, never, channel send and receive, and futures.
+
+The {\it linear} types are types of the form $|\sigma$, $\sigma_1 \to \sigma_2$, and
+machines and datatypes that contain any constructor $c_i$ such that
+$c_i$ has a parameter type $\sigma_{i,j}$ such that $\sigma_{i,j}$ is
+linear. Types that are not linear are referred to as {\it copyable}.
+
+Context variable $\Gamma$ is always used for copyable types. $\Delta, \Lambda$ are
+always used for linear types: $\Delta$ is for pattern variables, while
+$\Lambda$ is for environment declarations.
+
+We write $\sigma \in \Sigma$ if $\sigma$ is a datatype name $t$ or a machine name $T$
+of a declaration in $\Sigma$. Similarly, we write $c \in \Sigma$ if $c$ is a
+constructor in a datatype or machine declaration in $\Sigma$.
+
+\subsection{Typing}
+
+\subsubsection{Terms}
+
+Typing for EML has two judgements:
+\begin{itemize}
+\item $\Gamma; \Delta \vdash_\Sigma M : \sigma$.
+\item $\Gamma; \Delta \vdash_\Sigma^c M : \sigma$.
+\end{itemize}
+
+\begin{figure}
+\centering
+\renewcommand{\arraystretch}{2}
+\begin{tabular}{CC}
+\inference[Var]{x:\sigma \in \Gamma}{\Gamma; \Delta \vdash_\Sigma x : \sigma} &
+  \inference[LVar]{x:\sigma \in \Delta}{\Gamma; \Delta \vdash_\Sigma x : \sigma} \\
+\inference[Constr]{c:\sigma \in \Sigma}{\Gamma; \Delta \vdash_\Sigma c : \sigma} &
+  \inference[LConstr]{}{\Gamma; \Delta \vdash_\Sigma c : \sigma} \\
+\inference[Int]{}{\Gamma; \Delta \vdash_\Sigma i : \<int>} &
+  \inference[String]{}{\Gamma; \Delta \vdash_\Sigma s : \<string>} \\
+\onecol{\inference[Arith]{\Gamma; \Delta \vdash_\Sigma^c e : \<int> & \Gamma; \Delta' \vdash_\Sigma^c e' : \<int>}
+                         {\Gamma; \Delta, \Delta' \vdash_\Sigma e \<binop> e' : \<int>}
+                         {\mathit {\<binop> arithmetic}}} \\
+\onecol{
+  \inference[Compare]{\Gamma; \Delta \vdash_\Sigma^c e : \<int> & \Gamma; \Delta' \vdash_\Sigma^c e' : \<int>}
+                     {\Gamma; \Delta, \Delta' \vdash_\Sigma e \<binop> e' : \<bool>}
+                         {\mathit {\<binop> comparator}}} \\
+\onecol{\inference[Seq]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma & \Gamma; \Delta' \vdash_\Sigma^c e' : \tau}
+                       {\Gamma; \Delta, \Delta' \vdash_\Sigma (e; e') : \tau}} \\
+\onecol{
+  \inference[If]{\Gamma; \Delta \vdash_\Sigma^c e : \<bool> & \Gamma; \Delta' \vdash_\Sigma^c e' : \sigma &
+                       \Gamma; \Delta' \vdash_\Sigma^c e'' : \sigma}
+                {\Gamma; \Delta, \Delta' \vdash_\Sigma \<if> e \<then> e' \<else> e'' : \tau}} \\
+\onecol{\inference[Cancel]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma & \Gamma; \Delta' \vdash_\Sigma^c e' : \tau}
+                          {\Gamma; \Delta, \Delta' \vdash_\Sigma e \<handle> \<cancel> e' : \sigma}} \\
+\inference[Sleep]{\Gamma;\Delta \vdash_\Sigma^c e : \<int>}{\Gamma; \Delta \vdash_\Sigma \<sleep> e : |\<unit>} &
+  \inference[Never]{}{\Gamma; \Delta \vdash_\Sigma \<never> : |\sigma} \\
+\inference[Send]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma \<channel> & \Gamma; \Delta' \vdash_\Sigma^c e' : |\sigma}
+                {\Gamma; \Delta, \Delta' \vdash_\Sigma e!e' : |\<unit>} &
+  \inference[Rcv]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma \<channel>}{\Gamma; \Delta \vdash_\Sigma e? : |\sigma} \\
+\onecol{\inference[Future]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma}{\Gamma; \Delta \vdash_\Sigma |e : |\sigma}} \\
+\inference[L$\lambda$L]{\Gamma, x : \sigma; \Delta \vdash_\Sigma^c e : \tau}{\Gamma; \Delta \vdash_\Sigma \lambda x : \sigma. e : \sigma \to \tau} &
+  \inference[L$\lambda$R]{\Gamma; \Delta, x : \sigma \vdash_\Sigma^c e : \tau}{\Gamma; \Delta \vdash_\Sigma \lambda x : \sigma. e : \sigma \to \tau} \\
+\inference[$\lambda$L]{\Gamma, x : \sigma; \bullet \vdash_\Sigma^c e : \tau}{\Gamma; \bullet \vdash_\Sigma \lambda x : \sigma. e : \sigma \Rightarrow \tau} &
+  \inference[$\lambda$R]{\Gamma; x : \sigma \vdash_\Sigma^c e : \tau}{\Gamma; \bullet \vdash_\Sigma \lambda x : \sigma. e : \sigma \Rightarrow \tau} \\
+\onecol{
+  \inference[Case]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma & \Gamma, \Gamma_i; \Delta, \Delta_i \vdash_\Sigma^c P_i : \sigma &
+                   \Gamma, \Gamma_i; \Delta, \Delta_i \vdash_\Sigma^c e_i : \tau}
+                  {\Gamma; \Delta \vdash_\Sigma^c \<case> e \<of> P_i => e_i : \tau}} \\
+\inference[Let]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma & \Gamma, x : \sigma; \Delta' \vdash_\Sigma^c e' : \tau}
+          {\Gamma; \Delta, \Delta' \vdash_\Sigma \<let> \<val> x = e \<in> e' \<end> : \tau} &
+  \inference[LLet]{\Gamma; \Delta \vdash_\Sigma^c e : \sigma & \Gamma; \Delta', x : \sigma \vdash_\Sigma^c e' : \tau}
+            {\Gamma; \Delta, \Delta' \vdash_\Sigma \<let> \<val> x = e \<in> e' \<end> : \tau} \\
+\onecol{} \\
+\onecol{\inference[Empty]{\Gamma; \Delta \vdash_\Sigma e : \sigma}{\Gamma; \Delta \vdash_\Sigma^c e() : \sigma}} \\
+\onecol{
+  \inference[LApp]{\Gamma; \Delta \vdash_\Sigma e(e'_1, \dots, e'_n) : \sigma \to \tau &
+                     \Gamma; \Delta' \vdash_\Sigma^c e'' : \sigma}
+                  {\Gamma; \Delta, \Delta' \vdash_\Sigma^c e(e'_1, \dots, e'_n, e'') : \tau}} \\
+\onecol{
+  \inference[App]{\Gamma; \Delta \vdash_\Sigma e(e'_1, \dots, e'_n) : \sigma \Rightarrow \tau & \Gamma; \Delta' \vdash_\Sigma^c e'' : \sigma}
+                 {\Gamma; \Delta, \Delta' \vdash_\Sigma^c e(e'_1, \dots, e'_n, e'') : \tau}}
+\end{tabular}
+\caption{Typing Rules}\label{fig:typing}
+\end{figure}
+
+\subsubsection{Types and Contexts}
+
+The judgements expressing type and context validity are:
+\begin{itemize}
+\item $\vdash_\Sigma \sigma \<type>$.
+\item $\vdash \Sigma \<valid>$.
+\end{itemize}
+
+The rules of inference are:
+\begin{itemize}
+\item $\vdash_\Sigma b \<type>$, for $b$ a base type such as $\<int>$ or
+  $\<string>$.
+\item $\vdash_\Sigma \<datatype> t = c_1 \<of> \sigma_{1,1} * \dots * \sigma_{1,n_1}\ |\ \dots
+  \ |\ c_m \<of> \sigma_{m,1} * \dots * \sigma_{m,n_m} \<type>$ if:
+  \begin{itemize}
+  \item $t \not\in \Sigma$.
+  \item $c_i \not\in \Sigma$ for all $i \in \{1, \dots, m\}$.
+  \item $\sigma_{i,j} = t$ or $\vdash_\Sigma \sigma_{i,j_i}\ \<type>$, for all $i \in \{1, \dots, m\}$ and
+    $j_i \in \{ 1,\dots,n_i \}$.
+  \end{itemize}
+\item $\vdash_\Sigma \<machine> M = c_1 \<of> \sigma_{1,1} * \dots * \sigma_{1,n_1}\ |\ \dots
+  \ |\ c_m \<of> \sigma_{m,1} * \dots * \sigma_{m,n_m}
+  \ \<and>\
+  (c_{j_1} P_{1,1} \dots P_{1,n_1} = e_1)\ \dots\ (c_{j_p} P_{1,1} \dots P_{1,n_p} = e_p) \<type>$
+  if:
+  \begin{itemize}
+  \item $T \not\in \Sigma$.
+  \item $c_i \not\in \Sigma$ for all $i \in \{1, \dots, m\}$.
+  \item $\sigma_{i,j} = t$ or $\vdash_\Sigma \sigma_{i,j_i} \<type>$, for all $i \in \{1, \dots, m\}$ and
+    $j_i \in \{ 1,\dots,n_i \}$.
+  \item $\Gamma_i; \Delta_i \vdash_{\Sigma, M} P_{i,j} : \sigma_{i,j}$ for appropriate $i$ and
+    $j$. Adding $M$ to $\Sigma$ here means adding all of the
+    constructors $c_i$ as well. In this case, $\Gamma_i$ and
+    $\Delta_i$ should probably be included in the machine declaration,
+    although of course they could be inferred.
+  \item $\Gamma_i; \Delta_i \vdash_{\Sigma, M} e_i : M$.
+  \end{itemize}
+\end{itemize}
+
+\subsection{Reduction}
+
+Reduction has several judgements:
+\begin{itemize}
+  \item $\xi \models e \triangleright_H e'$. Head reduction.
+  \item $\xi \models e \triangleright_C^K e'$, for $K \in \{ V, S \}$. Child reduction.
+  \item $\xi \models e \triangleright_1 e'$. One-step reduction.
+  \item $\xi \models e \Rightarrow e'$. Evaluation.
+\end{itemize}
+
+The rules of inference are as follows:
+\begin{figure}
+\centering
+\renewcommand{\arraystretch}{2}
+\begin{tabular}{CC}
+\inference[BinOp]{i \<binop> j = k}{\xi \models i \<binop> j \triangleright_H k}
+  \inference[SeqHead]{}{\xi \models (e; e') \triangleright_H e'} \\
+\inference[IfTrue]{}{\xi \models \<if> \<true> \<then> e \<else> e' \triangleright_H e}
+  \inference[IfFalse]{}{\xi \models \<if> \<false> \<then> e \<else> e' \triangleright_H e}
+\end{tabular}
+\begin{tabular}{C}
+\inference[KChild]{K = k(e_i) & \xi \models e_i \triangleright_1 e_i'}
+  {\xi \models t(e_1 \dots e_i \dots e_n) \triangleright_C^K t(e_1 \dots e_i' \dots e_n)}
+\end{tabular}
+\begin{tabular}{CC}
+\inference[SeqLeft]{\xi \models e_1 \triangleright_1 e_1'}{\xi \models (e_1; e_2) \triangleright_1 (e_1'; e_2)}
+  \inference[Seq]{\xi \models e_1 \not\triangleright_1}{\xi \models (e_1; e_2) \triangleright_1 e_2} \\
+\onecol{\inference[IfCond]{\xi \models e \triangleright_1 e'''}{\xi \models \<if> e \<then> e' \<else> e'' \triangleright_1
+  \<if> e''' \<then> e' \<else> e''}} \\
+\onecol{\inference[If]{\xi \models e \not\triangleright_1 & \<if> e \<then> e' \<else> e'' \triangleright_H e'''}
+  {\xi \models \<if> e \<then> e' \<else> e'' \triangleright_1 e'''}} \\
+\onecol{\inference[Step]{\textit{One of:} &
+    \xi \models e \triangleright_C^V e' & \xi \models e \triangleright_H e' & \xi \models e \triangleright_C^S e'}
+  {\xi \models e \triangleright_1 e'}}
+\end{tabular}
+\begin{tabular}{C}
+\inference[Trans]{\xi \models e \triangleright_1 e' & \xi \models e' \Rightarrow e''}{\xi \models e \Rightarrow e''}
+\end{tabular}
+\caption{Reduction Rules}\label{fig:reduction}
+\end{figure}
+
+* Didn't put $c!e$, etc. in because those are events as presented here,
+but they're synchronous in the interpreter. Need to resolve that
+difference.
+
+* Need to add handling of cancellation, at least eventually. Futures
+also are not handled currently.
+
+\section{Metatheory}
+
+\subsection{Subject Reduction}
+
+\subsection{Adequacy}
+
+\section{Examples}
+
+\section{Related Work}
+
+\section{Conclusion}
+
+\end{document}
